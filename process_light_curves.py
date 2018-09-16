@@ -5,7 +5,59 @@ from collections import OrderedDict
 import argparse
 
 
-def calculate_num_flares(filename, file_path, n_std_dev, N, num_flares, star_type, name, dir_name, teff_list):
+def calc_derivative(k2):
+    """
+    :param file_path: path to file
+    :return: numpy array of first derivatives
+    """
+
+    d1 = np.zeros(len(k2['time']))
+    dt = np.zeros(len(k2['time']))
+    it = np.nditer(k2['flux'], flags=['c_index'])
+    while not it.finished:
+        if it.index < len(k2['flux']) - 1:
+            dt[it.index] = k2['time'][it.index + 1] - k2['time'][it.index]
+            d1[it.index] = (k2['flux'][it.index + 1] - k2['flux'][it.index]) / (k2['time'][it.index + 1] - k2['time'][it.index])
+
+        it.iternext()
+    return d1
+
+
+def calculate_num_flares_derivative(file_path, n_std_dev):
+    """
+
+    :param filename: file with light curve
+    :param file_path: path to file
+    :param n_std_dev: number of standard deviations to use for threshold
+    :param num_flares: number of flares detected in light curve
+    :param star_type: type of star
+    :param name: name of star
+    :param dir_name: name of directory
+    :return: number of flares
+    """
+    k2 = pd.read_csv(file_path)
+    k2.columns = ['time', 'flux', 'error']
+    k2.reset_index(drop=True)
+    d1 = calc_derivative(k2)
+    pos_threshold = n_std_dev * np.std(d1[d1 > 0]) + np.mean(d1[d1 > 0])
+    neg_threshold = -np.std(d1[d1 < 0]) + np.mean(d1[d1 < 0])
+    d1_thresh = np.concatenate((np.where(d1>pos_threshold)[0], np.where(d1<neg_threshold)[0]))
+    indices = np.sort(d1_thresh)
+    it = np.nditer(indices, flags=['c_index'])
+    flair_count = 0
+    above_thresh = False
+    while not it.finished:
+        if (it.index < len(indices) - 1) and (indices[it.index + 1] - indices[it.index] == 1) and not above_thresh:
+            above_thresh = True
+            print indices[it.index]
+            flair_count += 1
+        else:
+            above_thresh = False
+        it.iternext()
+    return flair_count
+
+
+def calculate_num_flares(file_path, n_std_dev, N):
     """
     Calculates the number of flares in a light curve based on a threshold n_std_dev above a rolling average
     :param filename: file with light curve
@@ -28,6 +80,10 @@ def calculate_num_flares(filename, file_path, n_std_dev, N, num_flares, star_typ
         if k2['flux'][index] > threshold_array[index]:
             flare_array[index] = k2['flux'][index]
     flare_count = len(flare_array[flare_array > 0])
+    return flare_count
+
+
+def get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, star_type, flare_count):
     with open(os.path.join('/'.join(file_path.split('/')[:6]),filename.split('.')[0]+'.info')) as fp:
         lines = fp.readlines()
         teff_list.append(lines[1].split(',')[1])
@@ -36,8 +92,7 @@ def calculate_num_flares(filename, file_path, n_std_dev, N, num_flares, star_typ
     dir_name.append(file_path.split('/')[4])
     star_type.append(file_path.split('/')[5])
     print(file_path, flare_count)
-    # return num_flares, name, dir_name, star_type
-
+    return num_flares, name, dir_name, star_type
 
 def process_curves(n_std_dev, N, mdwarf_list, root_dir):
     """
@@ -67,8 +122,10 @@ def process_curves(n_std_dev, N, mdwarf_list, root_dir):
                     if len(mdwarf_list[mdwarf_list.str.contains(filename.split('.')[0])]) > 0:
                         with open(file_path, 'r') as fp:
                             # num_flares, name, dir_name, star_type =
-                            calculate_num_flares(filename, file_path, n_std_dev, N, num_flares, star_type, name, dir_name, teff_list)
-
+                            flare_count = calculate_num_flares_derivative(file_path, n_std_dev)
+                            num_flares, name, dir_name, star_type = \
+                                get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, star_type,
+                                             flare_count)
     flare_dict = OrderedDict([('dirname', dir_name),
                               ('startype', star_type),
                               ('name', name),
@@ -76,14 +133,14 @@ def process_curves(n_std_dev, N, mdwarf_list, root_dir):
                               ('teff', teff_list)
                               ])
     flare_df = pd.DataFrame.from_dict(flare_dict)
-    flare_df.to_csv('mdwarf_flares_new.csv')
+    flare_df.to_csv('mdwarf_flares_{0}.csv'.format(n_std_dev))
 
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument("-s", "--std_dev", action='store_true')
-    parser.add_argument("-N", "--window_size", action='store_true')
-    parser.add_argument("-l", "--star_list", action='store_true')
+    parser.add_argument("-s", "--std_dev", required=False)
+    parser.add_argument("-N", "--window_size", required=False)
+    parser.add_argument("-l", "--star_list", required=False)
     args = parser.parse_args()
 
 

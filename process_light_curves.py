@@ -3,7 +3,22 @@ import numpy as np
 import os
 from collections import OrderedDict
 import argparse
+from scipy import interpolate, fftpack
 
+
+def calc_rotation_period(k2):
+    f = interpolate.interp1d(k2['time'], k2['flux'])
+    x_data_new = np.arange(k2['time'].min(), k2['time'].max(), .02)
+    y_data_new = f(x_data_new)
+    dt = x_data_new[1] - x_data_new[0]
+    X = fftpack.fft(y_data_new)
+    freqs = fftpack.fftfreq(len(y_data_new)) * 1/dt
+    abs_x = np.abs(X)
+    mags = abs_x[np.where(freqs > 0)]
+    pos_freqs = freqs[np.where(freqs > 0)]
+    ind = np.argpartition(mags, -2)[-2:]
+    oscillation_strength = mags[ind].max()/mags[ind].min()
+    return pos_freqs[np.argmax(mags)], oscillation_strength
 
 def calc_derivative(k2):
     """
@@ -23,7 +38,7 @@ def calc_derivative(k2):
     return d1
 
 
-def calculate_num_flares_derivative(file_path, n_std_dev):
+def calculate_num_flares_derivative(k2, n_std_dev):
     """
 
     :param filename: file with light curve
@@ -35,9 +50,7 @@ def calculate_num_flares_derivative(file_path, n_std_dev):
     :param dir_name: name of directory
     :return: number of flares
     """
-    k2 = pd.read_csv(file_path)
-    k2.columns = ['time', 'flux', 'error']
-    k2.reset_index(drop=True)
+
     d1 = calc_derivative(k2)
     pos_threshold = n_std_dev * np.std(d1[d1 > 0]) + np.mean(d1[d1 > 0])
     neg_threshold = -np.std(d1[d1 < 0]) + np.mean(d1[d1 < 0])
@@ -57,7 +70,7 @@ def calculate_num_flares_derivative(file_path, n_std_dev):
     return flair_count
 
 
-def calculate_num_flares(file_path, n_std_dev, N):
+def calculate_num_flares(k2, n_std_dev, N):
     """
     Calculates the number of flares in a light curve based on a threshold n_std_dev above a rolling average
     :param filename: file with light curve
@@ -70,9 +83,7 @@ def calculate_num_flares(file_path, n_std_dev, N):
     :param dir_name: name of directory
     :return: cumulative lists of number of flares, star names, directory names, star types
     """
-    k2 = pd.read_csv(file_path)
-    k2.columns = ['time', 'flux', 'error']
-    k2.reset_index(drop=True)
+
     thresh_value = np.mean(k2['flux']) + n_std_dev * np.std(k2['flux'])
     threshold_array = np.convolve(k2['flux'], np.ones((N,)) / N, mode='full') + thresh_value
     flare_array = np.zeros(len(k2['flux']))
@@ -83,7 +94,8 @@ def calculate_num_flares(file_path, n_std_dev, N):
     return flare_count
 
 
-def get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, star_type, flare_count):
+def get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, star_type, flare_count, max_freq,
+                 rotation_freq, osc_strength, oscillation_ratio):
     with open(os.path.join('/'.join(file_path.split('/')[:6]),filename.split('.')[0]+'.info')) as fp:
         lines = fp.readlines()
         teff_list.append(lines[1].split(',')[1])
@@ -91,8 +103,10 @@ def get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, sta
     name.append(filename.split('.')[0])
     dir_name.append(file_path.split('/')[4])
     star_type.append(file_path.split('/')[5])
+    rotation_freq.append(max_freq)
+    oscillation_ratio.append(osc_strength)
     print(file_path, flare_count)
-    return num_flares, name, dir_name, star_type
+    return num_flares, name, dir_name, star_type, rotation_freq, oscillation_ratio
 
 def process_curves(n_std_dev, N, mdwarf_list, root_dir):
     """
@@ -108,6 +122,9 @@ def process_curves(n_std_dev, N, mdwarf_list, root_dir):
     name = []
     dir_name = []
     teff_list = []
+    rotation_freq = []
+    oscillation_ratio = []
+
     print('processing..............')
     #traverse file directory
     for root, subdirs, files in os.walk(root_dir):
@@ -121,19 +138,24 @@ def process_curves(n_std_dev, N, mdwarf_list, root_dir):
                     # is this an mdwarf star?
                     if len(mdwarf_list[mdwarf_list.str.contains(filename.split('.')[0])]) > 0:
                         with open(file_path, 'r') as fp:
-                            # num_flares, name, dir_name, star_type =
-                            flare_count = calculate_num_flares_derivative(file_path, n_std_dev)
-                            num_flares, name, dir_name, star_type = \
+                            k2 = pd.read_csv(file_path)
+                            k2.columns = ['time', 'flux', 'error']
+                            k2.reset_index(drop=True)
+                            flare_count = calculate_num_flares_derivative(k2, n_std_dev)
+                            max_freq, osc_strength = calc_rotation_period(k2)
+                            num_flares, name, dir_name, star_type, rotation_freq, oscillation_ratio = \
                                 get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, star_type,
-                                             flare_count)
+                                             flare_count, max_freq, rotation_freq, osc_strength, oscillation_ratio)
     flare_dict = OrderedDict([('dirname', dir_name),
                               ('startype', star_type),
                               ('name', name),
                               ('numflares', num_flares),
-                              ('teff', teff_list)
+                              ('teff', teff_list),
+                              ('rotation_freq', rotation_freq),
+                              ('oscillation_ratio', oscillation_ratio)
                               ])
     flare_df = pd.DataFrame.from_dict(flare_dict)
-    flare_df.to_csv('mdwarf_flares_{0}.csv'.format(n_std_dev))
+    flare_df.to_csv('mdwarf_flares_{0}_freqs_oscillation.csv'.format(n_std_dev))
 
 
 if __name__=='__main__':

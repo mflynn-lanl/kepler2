@@ -60,7 +60,7 @@ def calculate_num_flares_derivative(k2, n_std_dev):
     flair_count = 0
     above_thresh = False
     while not it.finished:
-        if (it.index < len(indices) - 1) and (indices[it.index + 1] - indices[it.index] == 1) and not above_thresh:
+        if (it.index < len(indices) - 1) and (indices[it.index + 1] - indices[it.index] > 1) and not above_thresh:
             above_thresh = True
             print indices[it.index]
             flair_count += 1
@@ -94,11 +94,20 @@ def calculate_num_flares(k2, n_std_dev, N):
     return flare_count
 
 
-def get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, star_type, flare_count, max_freq,
+def get_metadata(file_path, filename, teff_list, logg_list, feh_list, rad_list, mass_list, lum_list, kp_list, jm_list, hm_list, km_list,num_flares, name, dir_name, star_type, flare_count, max_freq,
                  rotation_freq, osc_strength, oscillation_ratio):
     with open(os.path.join('/'.join(file_path.split('/')[:6]),filename.split('.')[0]+'.info')) as fp:
         lines = fp.readlines()
         teff_list.append(lines[1].split(',')[1])
+        logg_list.append(lines[1].split(',')[2])
+        feh_list.append(lines[1].split(',')[3])
+        rad_list.append(lines[1].split(',')[4])
+        mass_list.append(lines[1].split(',')[5])
+        lum_list.append(lines[1].split(',')[6])
+        kp_list.append(lines[1].split(',')[7])
+        jm_list.append(lines[1].split(',')[8])
+        hm_list.append(lines[1].split(',')[9])
+        km_list.append(lines[1].split(',')[10])
     num_flares.append(flare_count)
     name.append(filename.split('.')[0])
     dir_name.append(file_path.split('/')[4])
@@ -117,13 +126,8 @@ def process_curves(n_std_dev, N, mdwarf_list, root_dir):
     :param root_dir: root data directory
     :return:
     """
-    num_flares = []
-    star_type = []
-    name = []
-    dir_name = []
-    teff_list = []
-    rotation_freq = []
-    oscillation_ratio = []
+    num_flares, star_type,name, dir_name, teff_list, rotation_freq, oscillation_ratio = [], [], [], [], [], [], []
+    logg_list, feh_list, rad_list, mass_list, lum_list, kp_list, jm_list, hm_list, km_list = [],[],[],[],[],[],[],[],[]
 
     print('processing..............')
     #traverse file directory
@@ -144,13 +148,21 @@ def process_curves(n_std_dev, N, mdwarf_list, root_dir):
                             flare_count = calculate_num_flares_derivative(k2, n_std_dev)
                             max_freq, osc_strength = calc_rotation_period(k2)
                             num_flares, name, dir_name, star_type, rotation_freq, oscillation_ratio = \
-                                get_metadata(file_path, filename, teff_list, num_flares, name, dir_name, star_type,
+                                get_metadata(file_path, filename, teff_list, logg_list, feh_list, rad_list, mass_list, lum_list, kp_list, jm_list, hm_list, km_list, num_flares, name, dir_name, star_type,
                                              flare_count, max_freq, rotation_freq, osc_strength, oscillation_ratio)
     flare_dict = OrderedDict([('dirname', dir_name),
                               ('startype', star_type),
                               ('name', name),
                               ('numflares', num_flares),
                               ('teff', teff_list),
+                              ('logg', logg_list),
+                              ('feh', feh_list),
+                              ('rad', rad_list),
+                              ('lum', lum_list),
+                              ('kp', kp_list),
+                              ('jm', jm_list),
+                              ('hm', hm_list),
+                              ('km', km_list),
                               ('rotation_freq', rotation_freq),
                               ('oscillation_ratio', oscillation_ratio)
                               ])
